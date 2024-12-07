@@ -55,11 +55,11 @@ void print_gpu_info()
    printf("  Memory Bus Width:                              %d-bit\n",
          deviceProp.memoryBusWidth);
 
-   if (deviceProp.l2CacheSize)
-   {
-      printf("  L2 Cache Size:                                 %d bytes\n",
-            deviceProp.l2CacheSize);
-   }
+   // if (deviceProp.a2CacheSize)
+   // {
+   //    printf("  a2 Cache Size:                                 %d bytes\n",
+   //          deviceProp.a2CacheSize);
+   // }
 
    printf("  Max Texture Dimension Size (x,y,z)             1D=(%d), "
          "2D=(%d,%d), 3D=(%d,%d,%d)\n", deviceProp.maxTexture1D,
@@ -116,18 +116,18 @@ void reset_dweight_buffer(float *dw, unsigned max_size)
    dw[g_idx] = 0.0;
 }
 
-void make_w_buffer(float *w, int l0_size, int l1_size, int l2_size, int l3_size)
+void make_w_buffer(float *w, int a0_size, int a1_size, int a2_size, int a3_size)
 {
    random_device rd;
    mt19937 mt(rd());
-   normal_distribution<double> glorot_h0(0.0, 2.0 / (l0_size + l1_size));
-   normal_distribution<double> glorot_h1(0.0, 2.0 / (l1_size + l2_size));
-   normal_distribution<double> glorot_h2(0.0, 2.0 / (l2_size + l3_size));
+   normal_distribution<double> glorot_h0(0.0, 2.0 / (a0_size + a1_size));
+   normal_distribution<double> glorot_h1(0.0, 2.0 / (a1_size + a2_size));
+   normal_distribution<double> glorot_h2(0.0, 2.0 / (a2_size + a3_size));
 
    unsigned h0_size, h1_size, h2_size;
-   h0_size = l0_size * l1_size;
-   h1_size = l1_size * l2_size;
-   h2_size = l2_size * l3_size;
+   h0_size = a0_size * a1_size;
+   h1_size = a1_size * a2_size;
+   h2_size = a2_size * a3_size;
 
    //hidden 0
    unsigned st = 0, en = h0_size;
@@ -162,87 +162,69 @@ void showbuffer(float *a, unsigned max_size)
    printf("i : %d, v : %f \n", g_idx, a[g_idx]);
 }
 __global__ 
-void feed_forward_relu(float *l0, float *l1, float *w, float *b, 
-                        unsigned l0_size, unsigned l1_size, unsigned max_size)
+void feed_forward_relu(float *a0, float *a1, float *w, float *b, 
+                        unsigned a0_size, unsigned a1_size, unsigned max_size)
 {
    unsigned g_idx = blockIdx.x * blockDim.x + threadIdx.x;
    
    if(g_idx > max_size)
       return;
 
-   unsigned batch_idx = g_idx / l1_size;
-   unsigned local_idx = g_idx % l1_size;
+   unsigned batch_idx = g_idx / a1_size;
+   unsigned local_idx = g_idx % a1_size;
 
-   unsigned l0_idx = batch_idx * l0_size;
+   unsigned a0_idx = batch_idx * a0_size;
    
-   unsigned w_idx = local_idx * l0_size;
+   unsigned w_idx = local_idx * a0_size;
    unsigned b_idx = local_idx;
    
-   float z = 0.0f;
+   float z = b[b_idx];
 
-   for(int i = 0; i < l0_size; ++i)
+   for(int i = 0; i < a0_size; ++i)
    {
-      z += (l0[l0_idx + i] * w[w_idx + i]) + b[b_idx];
-
-      if(batch_idx == 1 && local_idx == 0)
-      {
-         // printf("%d,", (int)l0[l0_idx + i]);
-      
-         printf("g_idx : %d, i : %d, l0_idx : %d, l0 : %f, z : %f\n", g_idx, i, l0_idx, l0[l0_idx + i], z);
-      }
+      z += (a0[a0_idx + i] * w[w_idx + i]);
    }
 
-   // if(batch_idx == 1)
-   // {
-   //    printf("batch_idx : %d, local_idx : %d, z : %f\n", batch_idx, local_idx, z);
-   // }
-   //printf("batch_idx : %d, local_idx : %d, z : %f\n", batch_idx, local_idx, z);
-
-   l1[g_idx] = (z < 0.0) ? 0.0 : z;
+   a1[g_idx] = (z < 0.0) ? 0.0 : z;
 }
 
 __global__ 
-void feed_forward_sigmoid(float *l0, float *l1, float *w, float *b, 
-                        unsigned l0_size, unsigned l1_size, unsigned max_size)
+void feed_forward_sigmoid(float *a0, float *a1, float *w, float *b, 
+                        unsigned a0_size, unsigned a1_size, unsigned max_size)
 {
    unsigned g_idx = blockIdx.x * blockDim.x + threadIdx.x;
    
    if(g_idx > max_size)
       return;
 
-   unsigned batch_idx = g_idx / l1_size;
-   unsigned local_idx = g_idx % l1_size;
+   unsigned batch_idx = g_idx / a1_size;
+   unsigned local_idx = g_idx % a1_size;
 
-   unsigned l0_idx = batch_idx * l0_size;
+   unsigned a0_idx = batch_idx * a0_size;
    
-   unsigned w_idx = local_idx * l0_size;
+   unsigned w_idx = local_idx * a0_size;
    unsigned b_idx = local_idx;
    
-   float z = 0.0f;
+   float z = b[b_idx];
 
-   for(int i = 0; i < l0_size; ++i)
+   for(int i = 0; i < a0_size; ++i)
    {
-      z += (l0[l0_idx + i] * w[w_idx + i]) + b[b_idx];
+      z += a0[a0_idx + i] * w[w_idx + i];
    }
 
-   l1[g_idx] =  1.0 / (1 + expf(-z));
+   a1[g_idx] =  1.0 / (1 + expf(-z));
 }
 
 __global__
-void derivate_cost(float *y, float *l3, float *dl3, unsigned l3_size, unsigned max_size)
+void derivate_cost(unsigned *y, float *a3, float *da3, unsigned max_size)
 {
    unsigned g_idx = blockIdx.x * blockDim.x + threadIdx.x;
    
    if(g_idx > max_size)
       return;
 
-   unsigned y_idx = g_idx / l3_size;
-   unsigned y_pred_idx = g_idx % l3_size;
-
-   unsigned y_val = y[y_idx];
-
-   float y_true = (y_val == y_pred_idx) ? 1.0 : 0.0;
-   float y_pred = l3[g_idx];
+   unsigned y_true = y[g_idx];
+   float y_pred = a3[g_idx];
 
    float comp = (y_pred * -1.0) + 1.0;
    float denom = y_pred * comp;
@@ -251,7 +233,7 @@ void derivate_cost(float *y, float *l3, float *dl3, unsigned l3_size, unsigned m
 
    float g_prime = ((y_pred * -1.0) + 1.0) * y_pred;
 
-   dl3[g_idx] = ((y_true - y_pred) / denom_clip) * g_prime; //calc dz + activation_backward(sigmoid)
+   da3[g_idx] = (((float)y_true - y_pred) / denom_clip) * g_prime; //calc dz + activation_backward(sigmoid)
 }
 
 __global__ 
@@ -273,8 +255,6 @@ void update_b(float *da1, float *b, unsigned a1_size, unsigned batch_size,
    float baux = (db / (float)batch_size) * learning_rate;
 
    b[g_idx] += baux;
-
-   // printf("g_idx : %d, b[g_idx] : %f\n", g_idx, b[g_idx]);
 }
 
 __global__ 
@@ -288,43 +268,18 @@ void update_w(float *a0, float *da1, float *w,
       return;
 
    float dw = 0.0f; 
-   float w_l2 = w[g_idx] * lambd; 
 
-   unsigned a0_idx = g_idx / a1_size;
-   unsigned a1_idx = g_idx % a1_size;
+   unsigned a0_idx = g_idx / a0_size;
+   unsigned a1_idx = g_idx % a0_size;
 
    for(int i = 0; i < batch_size; ++i)
    {
-      dw += da1[a1_idx + (i * a1_size)] * a0[a0_idx + (i * a0_size)];
+      dw += a0[a0_idx + (i * a0_size)] * da1[a1_idx + (i * a1_size)];
    }
 
-   float waux = ((dw + w_l2) / (float)batch_size) * learning_rate;
+   float waux = ((dw + (w[g_idx] * lambd)) / (float)batch_size) * learning_rate;
 
    w[g_idx] += waux;      
-   // printf("a0_idx : %d, a1_idx : %d, w[g_idx] : %f\n", learning_rate, a0_idx, a1_idx, w[g_idx]);
-}
-
-__global__ 
-void update_layer_sigmoid(float *a0, float *da0, float *da1, float *w, 
-               unsigned a0_size, unsigned a1_size, unsigned max_size)
-{
-   unsigned g_idx = blockIdx.x * blockDim.x + threadIdx.x;
-   
-   if(g_idx > max_size)
-      return;
-
-   float dz = 0.0f; 
-
-   unsigned w_idx = (g_idx % a0_size) * a1_size;
-   unsigned a1_idx = (g_idx / a0_size) * a1_size;
-
-   for(int i = 0; i < a1_size; ++i)
-   {
-      dz += w[w_idx + i] * da1[a1_idx + i];
-   }
-
-   da0[g_idx] = dz;
-   //printf("batch : %d, local : %d, da0[g_idx] : %f\n", (g_idx / a0_size), (g_idx % a0_size), da0[g_idx]);
 }
 
 __global__ 
@@ -339,41 +294,33 @@ void update_layer_relu(float *a0, float *da0, float *da1, float *w,
    float dz = 0.0f; 
    float g_prime = 0.0f;
 
-   unsigned w_idx = (g_idx % a0_size) * a1_size;
+   unsigned w_idx = (g_idx % a0_size);
    unsigned a1_idx = (g_idx / a0_size) * a1_size;
 
    for(int i = 0; i < a1_size; ++i)
    {
-      dz += w[w_idx + i] * da1[a1_idx + i];
+      dz += w[w_idx + (i + a0_size)] * da1[a1_idx + i];
    }
 
-   g_prime = a0[g_idx];
-   // printf("batch : %d, local : %d, z : %f\n", (g_idx / a0_size), (g_idx % a0_size), g_prime);
-
-   g_prime = (g_prime > 0) ? 1 : 0;
+   g_prime = (a0[g_idx] > 0) ? 1 : 0;
 
    da0[g_idx] = g_prime * dz;
-   
-   // 
 }
 
 __global__
-void compute_accuracy(float *l3, float *y_hat, float *acc, unsigned l3_size, unsigned max_size)
+void compute_accuracy(float *a3, unsigned *y_hat, int *acc, unsigned a3_size, unsigned batch_size)
 {
    int hits = 0;
-
-   float max = 0.0f;
-   int max_index = 0;
    
-   for(int i = 0; i < max_size; ++i)
+   for(int i = 0; i < batch_size; ++i)
    {
-      max = 0.0f;
-     
-      for(int j = 0; j < l3_size; ++j)
+      float max = a3[(i * a3_size) + 0];
+      int max_index = 0;
+
+      for(int j = 1; j < a3_size; ++j)
       {
          
-         float val = l3[j + (i * l3_size)];
-         // printf("%f, ", val);
+         float val = a3[(i * a3_size) + j];
 
          if(max < val)
          {
@@ -381,18 +328,17 @@ void compute_accuracy(float *l3, float *y_hat, float *acc, unsigned l3_size, uns
             max_index = j;
          }
       }
-      // printf("max : %f, max_index : %d, y_hat : %d\n", max, max_index, (int)y_hat[i]);
-      if(max_index == (int)y_hat[i])
+
+      if(y_hat[(i * a3_size) + max_index] == 1)
       {
          hits++;
       } 
    }
-
    
-   acc[0] = (float)hits / (float)max_size;
+   acc[0] += hits;
 }
 
-void load_buffer(float *train_x, float *train_y/*, float *test_x, float *test_y*/)
+void load_buffer(float *train_x, unsigned *train_y)
 {
    std::string file_name;
    std::string line, value;
@@ -409,11 +355,13 @@ void load_buffer(float *train_x, float *train_y/*, float *test_x, float *test_y*
    // Read data, line by line
    while (getline(myFile, line))
    {
+      int value2;
       float value;
       stringstream ss(line);
-      ss >> value;
+      ss >> value2;
       
-      train_y[index_y++] = value;
+      train_y[(index_y) * 10 + value2] = 1;
+      index_y++;
       if (ss.peek() == ',') ss.ignore();
 
       while (ss >> value)
@@ -469,53 +417,54 @@ int run()
    print_gpu_info();
 
    // memory alloc
-   float *train_x, *train_y; // *test_x, *test_y;
+   float *train_x;
+   unsigned *train_y; // *test_x, *test_y;
+
    float *w;
 
-   float *d_train_x, *d_train_y; // *d_test_x, *d_test_y;
+   float *d_train_x;
+   unsigned *d_train_y; // *d_test_x, *d_test_y;
 
-   float *d_l0, *d_l1, *d_l2, *d_l3, *d_w, *d_b;
-   float *d_dl0, *d_dl1, *d_dl2, *d_dl3, *d_dw, *d_db;
-   float *d_acc;
+   float *d_a1, *d_a2, *d_a3, *d_w, *d_b;
+   float *d_da1, *d_da2, *d_da3, *d_dw, *d_db;
+   int *d_acc;
 
    int train_x_size, train_y_size; // test_x_size, test_y_size;
-   int l0_size, l1_size, l2_size, l3_size, w_size, b_size;
-   int l0_size_batch, l1_size_batch, l2_size_batch, l3_size_batch;
-   int epochs = 10;
+   int a0_size, a1_size, a2_size, a3_size, w_size, b_size;
+   int a0_size_batch, a1_size_batch, a2_size_batch, a3_size_batch;
+   int epochs = 100;
    int batch_size = 32;
    float lambd = 0.7;
    float learning_rate = 0.001;
 
-   train_x_size = 60000 * (28 * 28);    
-   train_y_size = 60000;     
-
    // test_x_size = 10000 * (28 * 28);   
    // test_y_size = 10000;                      
 
-   l0_size = 784;
-   l1_size = 256;
-   l2_size = 64;
-   l3_size = 10;
+   a0_size = 784;
+   a1_size = 256;
+   a2_size = 64;
+   a3_size = 10;
 
-   l0_size_batch = l0_size * batch_size;
-   l1_size_batch = l1_size * batch_size;
-   l2_size_batch = l2_size * batch_size;
-   l3_size_batch = l3_size * batch_size;
+   train_x_size = 60000 * a0_size;    
+   train_y_size = 60000 * a3_size;  
 
-   w_size = (l0_size * l1_size) + (l1_size * l2_size) + (l2_size * l3_size);
-   b_size = l1_size + l2_size + l3_size;
+   a0_size_batch = a0_size * batch_size;
+   a1_size_batch = a1_size * batch_size;
+   a2_size_batch = a2_size * batch_size;
+   a3_size_batch = a3_size * batch_size;
+
+   w_size = (a0_size * a1_size) + (a1_size * a2_size) + (a2_size * a3_size);
+   b_size = a1_size + a2_size + a3_size;
    
    // print
    cout << "-------------------- info --------------------" << endl;
    cout << "train_x_size : " << train_x_size << endl;
    cout << "train_y_size : " << train_y_size << endl;
-   // cout << "test_x_size : " << test_x_size << endl;
-   // cout << "test_y_size : " << test_y_size << endl << endl;
 
-   cout << "l0_size : " << l0_size << endl;
-   cout << "l1_size : " << l1_size << endl;
-   cout << "l2_size : " << l2_size << endl;
-   cout << "l3_size : " << l3_size << endl << endl;
+   cout << "a0_size : " << a0_size << endl;
+   cout << "a1_size : " << a1_size << endl;
+   cout << "a2_size : " << a2_size << endl;
+   cout << "a3_size : " << a3_size << endl << endl;
 
    cout << "w_size : " << w_size << endl;
    cout << "b_size : " << b_size << endl << endl;
@@ -528,34 +477,29 @@ int run()
 
    // test, train
    train_x  = (float *)malloc(sizeof(float) * train_x_size);
-   train_y  = (float *)malloc(sizeof(float) * train_y_size);
-   // test_x   = (float *)malloc(sizeof(float) * test_x_size);
-   // test_y   = (float *)malloc(sizeof(float) * test_y_size);
+   train_y  = (unsigned *)malloc(sizeof(unsigned) * train_y_size);
    w        = (float *)malloc(sizeof(float) * w_size);
 
    CUDA_CHECK(cudaMalloc((void**)&d_train_x, sizeof(float) * train_x_size));
-   CUDA_CHECK(cudaMalloc((void**)&d_train_y, sizeof(float) * train_y_size));
-   // CUDA_CHECK(cudaMalloc((void**)&d_test_x, sizeof(float) * test_x_size));
-   // CUDA_CHECK(cudaMalloc((void**)&d_test_y, sizeof(float) * test_y_size));
+   CUDA_CHECK(cudaMalloc((void**)&d_train_y, sizeof(unsigned) * train_y_size));
+
 
    // layer
-   CUDA_CHECK(cudaMalloc((void**)&d_l0, sizeof(float) * l0_size_batch));
-   CUDA_CHECK(cudaMalloc((void**)&d_l1, sizeof(float) * l1_size_batch));
-   CUDA_CHECK(cudaMalloc((void**)&d_l2, sizeof(float) * l2_size_batch));
-   CUDA_CHECK(cudaMalloc((void**)&d_l3, sizeof(float) * l3_size_batch));
+   CUDA_CHECK(cudaMalloc((void**)&d_a1, sizeof(float) * a1_size_batch));
+   CUDA_CHECK(cudaMalloc((void**)&d_a2, sizeof(float) * a2_size_batch));
+   CUDA_CHECK(cudaMalloc((void**)&d_a3, sizeof(float) * a3_size_batch));
    
    CUDA_CHECK(cudaMalloc((void**)&d_w, sizeof(float) * w_size));
    CUDA_CHECK(cudaMalloc((void**)&d_b, sizeof(float) * b_size));
 
    // d layer
-   CUDA_CHECK(cudaMalloc((void**)&d_dl0, sizeof(float) * l0_size_batch));
-   CUDA_CHECK(cudaMalloc((void**)&d_dl1, sizeof(float) * l1_size_batch));
-   CUDA_CHECK(cudaMalloc((void**)&d_dl2, sizeof(float) * l2_size_batch));
-   CUDA_CHECK(cudaMalloc((void**)&d_dl3, sizeof(float) * l3_size_batch));
+   CUDA_CHECK(cudaMalloc((void**)&d_da1, sizeof(float) * a1_size_batch));
+   CUDA_CHECK(cudaMalloc((void**)&d_da2, sizeof(float) * a2_size_batch));
+   CUDA_CHECK(cudaMalloc((void**)&d_da3, sizeof(float) * a3_size_batch));
    
    CUDA_CHECK(cudaMalloc((void**)&d_dw, sizeof(float) * w_size));
    CUDA_CHECK(cudaMalloc((void**)&d_db, sizeof(float) * b_size));
-   CUDA_CHECK(cudaMalloc((void**)&d_acc, sizeof(float) * 1));
+   CUDA_CHECK(cudaMalloc((void**)&d_acc, sizeof(int) * 1));
 
    clock_t start, finish;
    double duration;
@@ -573,174 +517,181 @@ int run()
    // memcpy
    start = clock();
    
-   make_w_buffer(w, l0_size, l1_size, l2_size, l3_size);
+   make_w_buffer(w, a0_size, a1_size, a2_size, a3_size);
 
    reset_bias_buffer<<<BLOCK_PER_GRID(b_size), THREADS_PER_BLOCK>>>(d_b, d_db, b_size);
    reset_dweight_buffer<<<BLOCK_PER_GRID(w_size), THREADS_PER_BLOCK>>>(d_dw, w_size);
 
    CUDA_CHECK(cudaMemcpy(d_train_x, train_x, sizeof(float) * train_x_size, cudaMemcpyHostToDevice));
-   CUDA_CHECK(cudaMemcpy(d_train_y, train_y, sizeof(float) * train_y_size, cudaMemcpyHostToDevice));
-   // CUDA_CHECK(cudaMemcpy(d_test_x, test_x, sizeof(float) * test_x_size, cudaMemcpyHostToDevice));
-   // CUDA_CHECK(cudaMemcpy(d_test_y, test_y, sizeof(float) * test_y_size, cudaMemcpyHostToDevice));
+   CUDA_CHECK(cudaMemcpy(d_train_y, train_y, sizeof(unsigned) * train_y_size, cudaMemcpyHostToDevice));
    CUDA_CHECK(cudaMemcpy(d_w, w, sizeof(float) * w_size, cudaMemcpyHostToDevice));
 
    finish = clock();
    duration = (double)(finish - start) / CLOCKS_PER_SEC;
    cout << "* memcpy time : " << duration << endl;
 
-   unsigned num_batches = ceil(train_y_size / batch_size);
+   unsigned num_batches = ceil(train_y_size / a3_size_batch);
 
    // train 
    cout << endl;
    float *d_acc_x = d_train_x;
-   float *d_acc_y = d_train_y;
-   float *d_train_batch_x, *d_train_batch_y;
+   unsigned *d_acc_y = d_train_y;
    
-   epochs = 1;
-   num_batches = 1;
+   // epochs = 1;
+   // num_batches = 1;
+   cout << "num_batches : " <<num_batches << endl;
 
    for(int i = 0; i < epochs; ++i)
    {
-      for(int j = 0; j < num_batches; ++j)
+      for(int j = 3; j < num_batches; ++j)
       {
-         d_train_batch_x = d_train_x + (j * batch_size * (28 * 28));
-         d_train_batch_y = d_train_y + (j * batch_size);
+         float *d_train_batch_x = d_train_x + (j * a0_size_batch);
+         unsigned *d_train_batch_y = d_train_y + (j * a3_size_batch);
 
          // "relu", "relu", "sigmoid"
 
          // feed forward
-         unsigned max_size = l1_size_batch;
-         unsigned w_idx = 0;
-         unsigned b_idx = 0;
+         unsigned max_size = a1_size_batch;
+         unsigned w_idx = 0, w_idx_tmp = 0;
+         unsigned b_idx = 0, b_idx_tmp = 0;
 
-         // layer (l0 -> l1)
-         feed_forward_relu<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_train_x, d_l1, &d_w[w_idx], &d_b[b_idx], 
-                                 l0_size, l1_size, max_size);
+         // layer (a0 -> a1)
+         feed_forward_relu<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(
+                                 d_train_batch_x, d_a1, &d_w[w_idx], &d_b[b_idx], 
+                                 a0_size, a1_size, max_size);
 
-         // // layer (l1 -> l2)
-         // max_size = l2_size_batch;
-         // w_idx += l0_size * l1_size;
-         // b_idx += l1_size;
+         // layer (a1 -> a2)
+         max_size = a2_size_batch;
+         w_idx += a0_size * a1_size;
+         b_idx += a1_size;
          
-         // feed_forward_relu<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_l1, d_l2, &d_w[w_idx], &d_b[b_idx], 
-         //                         l1_size, l2_size, max_size);
+         feed_forward_relu<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(
+                                 d_a1, d_a2, &d_w[w_idx], &d_b[b_idx], 
+                                 a1_size, a2_size, max_size);
 
-         // // layer (l2 -> l3)
-         // max_size = l3_size_batch;
-         // w_idx += l1_size * l2_size;
-         // b_idx += l2_size;
+         // layer (a2 -> a3)
+         max_size = a3_size_batch;
+         w_idx += a1_size * a2_size;
+         b_idx += a2_size;
          
-         // feed_forward_sigmoid<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_l2, d_l3, &d_w[w_idx], &d_b[b_idx], 
-         //                         l2_size, l3_size, max_size);
+         feed_forward_sigmoid<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(
+                                 d_a2, d_a3, &d_w[w_idx], &d_b[b_idx], 
+                                 a2_size, a3_size, max_size);
          
-         // // back propagate
-         // max_size = l3_size_batch;
+         // back propagate
+         max_size = a3_size_batch;
 
-         // // layer (l3)
-         // derivate_cost<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_train_batch_y, d_l3, d_dl3, 
-         //                         l3_size, max_size);  
+         // layer (a3)
+         derivate_cost<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(
+                                 d_train_batch_y, d_a3, d_da3, max_size);  
 
-         // // layer (l3 -> l2)
-         // max_size = l2_size_batch;
-         // update_layer_sigmoid<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_l2, d_dl2, d_dl3, &d_w[w_idx], 
-         //                l2_size, l3_size, max_size);  
+         // layer (a3 -> a2)
+         max_size = a2_size_batch;
+         w_idx_tmp = w_idx;
+         b_idx_tmp = b_idx;
 
-         // max_size = (l2_size * l3_size);
-         // update_w<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_l2, d_dl3, &d_w[w_idx], 
-         //                l2_size, l3_size, batch_size, learning_rate, lambd, max_size);  
-
-         // max_size = l3_size;
-         // update_b<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_dl3, &d_b[b_idx], 
-         //                l3_size, batch_size, learning_rate, max_size);  
-
-         // // layer (l2 -> l1)
-         // w_idx -= (l2_size * l1_size);
-         // b_idx -= l2_size;
+         update_layer_relu<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(
+                        d_a2, d_da2, d_da3, &d_w[w_idx], 
+                        a2_size, a3_size, max_size);  
          
-         // max_size = l1_size_batch;   
-         // update_layer_relu<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_l1, d_dl1, d_dl2, &d_w[w_idx], 
-         //                l1_size, l2_size, max_size); 
+         // layer (a2 -> a1)
+         max_size = a1_size_batch; 
+         w_idx -= (a2_size * a3_size);
+
+      
+         update_layer_relu<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(
+                        d_a1, d_da1, d_da2, &d_w[w_idx], 
+                        a1_size, a2_size, max_size); 
+            
          
-         // max_size = (l2_size * l1_size);
-         // update_w<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_l1, d_dl2, &d_w[w_idx], 
-         //                l1_size, l2_size, batch_size, learning_rate, lambd, max_size);
-
-         // max_size = l2_size;
-         // update_b<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_dl2, &d_b[b_idx], 
-         //                l2_size, batch_size, learning_rate, max_size); 
+         max_size = a3_size;
+         update_b<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(
+                        d_da3, &d_b[b_idx_tmp], 
+                        a3_size, batch_size, learning_rate, max_size);  
 
 
-         // // layer (l1 -> l0)
-         // w_idx -= (l1_size * l0_size);
-         // b_idx -= l1_size;
+         max_size = a2_size;
+         b_idx_tmp -= a2_size;
+         update_b<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(
+                        d_da2, &d_b[b_idx_tmp], 
+                        a2_size, batch_size, learning_rate, max_size); 
+
+         max_size = a1_size;
+         b_idx_tmp -= a1_size;
+         update_b<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(
+                        d_da1, &d_b[b_idx_tmp], 
+                        a1_size, batch_size, learning_rate, max_size);
          
-         // max_size = l0_size_batch;   
-         // update_layer_relu<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_l0, d_dl0, d_dl1, &d_w[w_idx], 
-         //                l0_size, l1_size, max_size);
+         // layer (a3 -> a2)  
+         max_size = (a3_size * a2_size);
+         update_w<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(
+                        d_a2, d_da3, &d_w[w_idx_tmp], 
+                        a2_size, a3_size, batch_size, 
+                        learning_rate, lambd, max_size);  
 
-         // max_size = (l1_size * l0_size);
-         // update_w<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_l0, d_dl1, &d_w[w_idx], 
-         //                l0_size, l1_size, batch_size, learning_rate, lambd, max_size);
+         // layer (a2 -> a1)  
+         max_size = (a2_size * a1_size);
+         w_idx_tmp -= (a2_size * a1_size);
+   
+         update_w<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(
+                        d_a1, d_da2, &d_w[w_idx_tmp], 
+                        a1_size, a2_size, batch_size, 
+                        learning_rate, lambd, max_size);
 
-         // max_size = l1_size;
-         // update_b<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_dl1, &d_b[b_idx], 
-         //                l1_size, batch_size, learning_rate, max_size);
+         // layer (a1 -> a0)   
+         max_size = (a1_size * a0_size);
+         w_idx_tmp -= (a1_size * a0_size);
+
+         update_w<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(
+                        d_train_batch_x, d_da1, &d_w[w_idx_tmp], 
+                        a0_size, a1_size, batch_size, 
+                        learning_rate, lambd, max_size);
+
       }
 
-      // prediction
-      // for(int j = 0; j < 3; ++j)
-      // {
-      //    unsigned max_size = l1_size_batch;
-      //    unsigned w_idx = 0;
-      //    unsigned b_idx = 0;
-         
-      //    // layer (l0 -> l1)
-      //    feed_forward_relu<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_acc_x + (j * l0_size_batch), d_l1, &d_w[w_idx], &d_b[b_idx], 
-      //                            l0_size, l1_size, max_size);
+      unsigned hits = 0;
 
-      //    // layer (l1 -> l2)
-      //    max_size = l2_size_batch;
-      //    w_idx += l0_size * l1_size;
-      //    b_idx += l1_size;
-         
-      //    feed_forward_relu<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_l1, d_l2, &d_w[w_idx], &d_b[b_idx], 
-      //                            l1_size, l2_size, max_size);
+      CUDA_CHECK(cudaMemset(d_acc, 0, sizeof(int) * 1))
 
-      //    // layer (l2 -> l3)
-      //    max_size = l3_size_batch;
-      //    w_idx += l2_size * l3_size;
-      //    b_idx += l2_size;
+      for(int j = 0; j < 3; ++j)
+      {
+         unsigned max_size = a1_size_batch;
+         unsigned w_idx = 0;
+         unsigned b_idx = 0;
          
-      //    feed_forward_sigmoid<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(d_l2, d_l3, &d_w[w_idx], &d_b[b_idx], 
-      //                            l2_size, l3_size, max_size);
-      // }
-      float acc;
-      compute_accuracy<<<1, 1>>>(d_l3, d_acc_y, d_acc, l3_size, (unsigned)(3 * batch_size));
-      cudaMemcpy(&acc, d_acc, sizeof(float) * 1, cudaMemcpyDeviceToHost);
+         // layer (a0 -> a1)
+         feed_forward_relu<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(
+                              &d_acc_x[j * a0_size_batch], d_a1, &d_w[w_idx], &d_b[b_idx], 
+                              a0_size, a1_size, max_size);
+
+         // layer (a1 -> a2)
+         max_size = a2_size_batch;
+         w_idx += a0_size * a1_size;
+         b_idx += a1_size;
+         
+         feed_forward_relu<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(
+                              d_a1, d_a2, &d_w[w_idx], &d_b[b_idx], 
+                              a1_size, a2_size, max_size);
+
+         // layer (a2 -> a3)
+         max_size = a3_size_batch;
+         w_idx += a2_size * a3_size;
+         b_idx += a2_size;
+         
+         feed_forward_sigmoid<<<BLOCK_PER_GRID(max_size), THREADS_PER_BLOCK>>>(
+                              d_a2, d_a3, &d_w[w_idx], &d_b[b_idx], 
+                              a2_size, a3_size, max_size);
+         
+         compute_accuracy<<<1, 1>>>(d_a3, &d_acc_y[j * a3_size_batch], d_acc, a3_size, (unsigned)(3 * batch_size));
+      }
+      
+      CUDA_CHECK(cudaMemcpy(&hits, d_acc, sizeof(unsigned) * 1, cudaMemcpyDeviceToHost));
 
       cout << "Epoch: " << i << " ";
-      cout << "Accuracy: " << acc << endl;
+      cout << "hits: " << hits << " ";
+      cout << "Accuracy: " << hits / (float)(3 * batch_size) << endl;
    }
    cout << endl;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
    // free
    start = clock();
@@ -756,18 +707,16 @@ int run()
    // CUDA_CHECK(cudaFree(d_test_x));
    // CUDA_CHECK(cudaFree(d_test_y));
 
-   CUDA_CHECK(cudaFree(d_l0));
-   CUDA_CHECK(cudaFree(d_l1));
-   CUDA_CHECK(cudaFree(d_l2));
-   CUDA_CHECK(cudaFree(d_l3));
+   CUDA_CHECK(cudaFree(d_a1));
+   CUDA_CHECK(cudaFree(d_a2));
+   CUDA_CHECK(cudaFree(d_a3));
 
    CUDA_CHECK(cudaFree(d_w));
    CUDA_CHECK(cudaFree(d_b));
 
-   CUDA_CHECK(cudaFree(d_dl0));
-   CUDA_CHECK(cudaFree(d_dl1));
-   CUDA_CHECK(cudaFree(d_dl2));
-   CUDA_CHECK(cudaFree(d_dl3));
+   CUDA_CHECK(cudaFree(d_da1));
+   CUDA_CHECK(cudaFree(d_da2));
+   CUDA_CHECK(cudaFree(d_da3));
 
    CUDA_CHECK(cudaFree(d_dw));
    CUDA_CHECK(cudaFree(d_db));
